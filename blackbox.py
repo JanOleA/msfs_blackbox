@@ -62,6 +62,8 @@ class Recorder:
                                                                    True, self.WHITE)
         self._stat_texts["Stdvals"] = self._fonts[17].render("Standard values:",
                                                              True, self.WHITE)
+        self._stat_texts["Usrvals"] = self._fonts[17].render("User defined values:",
+                                                             True, self.WHITE)
         self._stat_texts["Value"] = self._fonts[13].render("Value:",
                                                            True, self.WHITE)
         self._stat_texts["Curr"] = self._fonts[13].render("Curr:",
@@ -70,6 +72,8 @@ class Recorder:
                                                           True, self.WHITE)
         self._stat_texts["Row"] = self._fonts[13].render("Row:",
                                                          True, self.WHITE)
+        self._stat_texts["Column"] = self._fonts[13].render("Column:",
+                                                            True, self.WHITE)
         self._stat_texts["Startrecord"] = self._fonts[25].render("Start recording",
                                                                  True, self.WHITE)
         self._stat_texts["Stoprecord"] = self._fonts[25].render("Stop recording",
@@ -120,6 +124,10 @@ class Recorder:
         self._screen.blit(self._stat_texts["Value"], (18, 96))
         self._screen.blit(self._stat_texts["Curr"], (180, 96))
 
+        self._screen.blit(self._stat_texts["Usrvals"], (518, 70))
+        self._screen.blit(self._stat_texts["Value"], (518, 96))
+        self._screen.blit(self._stat_texts["Curr"], (680, 96))
+
         text_y = 114
         for key, item in self.data_dict.items():
             text_name = self._fonts[15].render(self.data_units[key][0], True, self.WHITE)
@@ -130,6 +138,18 @@ class Recorder:
             text_value = self._fonts[15].render(text_value, True, self.WHITE)
             self._screen.blit(text_name, (18, text_y))
             self._screen.blit(text_value, (180, text_y))
+            text_y += text_value.get_height() + 3
+
+        text_y = 114
+        for key, item in self.user_data_dict.items():
+            text_name = self._fonts[15].render(self.data_units[key][0], True, self.WHITE)
+            try:
+                text_value = str(item[-1])
+            except IndexError:
+                text_value = "N/A"
+            text_value = self._fonts[15].render(text_value, True, self.WHITE)
+            self._screen.blit(text_name, (518, text_y))
+            self._screen.blit(text_value, (680, text_y))
             text_y += text_value.get_height() + 3
 
         if self._mode == "preflight":
@@ -170,7 +190,6 @@ class Recorder:
         self._simconnect = SimConnect()
         self._aircraftrequests = AircraftRequests(self._simconnect, _time = 0)
 
-        self.reset()
         self.data_units = {"VERTICAL_SPEED": ("Vertical speed", "ft/min"),
                            "AIRSPEED_TRUE": ("True airspeed", "knots"),
                            "AIRSPEED_INDICATED": ("Indicated airspeed", "knots"),
@@ -178,6 +197,7 @@ class Recorder:
                            "PLANE_ALT_ABOVE_GROUND": ("Radar altitude", "feet"),
                            "PLANE_ALTITUDE": ("Altitude (AMSL)", "feet"),
                            "G_FORCE": ("G-force", None)}
+        self.reset()
         print("Connected...")
 
     def reset(self):
@@ -198,6 +218,25 @@ class Recorder:
                           "PLANE_ALTITUDE": [],
                           "G_FORCE": []}
 
+        self.load_user_vars()
+
+    def load_user_vars(self):
+        self.user_data_dict = {}
+        with open("user_values.txt", "r") as infile:
+            lines = infile.readlines()
+        
+        for line in lines:
+            if line[0] == "#":
+                continue
+            if "#" in line:
+                line = line.split("#")[0]
+            line_split = line.split(",")
+            if len(line_split) != 3:
+                print("Skipping line:", line)
+            self.user_data_dict[line_split[0]] = []
+            self.data_units[line_split[0]] = (line_split[1], line_split[2])
+        print("User vars loaded")
+
     def get_data(self):
         """ Collect data from the simulator via SimConnect """
         arq = self._aircraftrequests
@@ -217,6 +256,14 @@ class Recorder:
             self.airborne_list.pop(0)
 
         for key, item in self.data_dict.items():
+            item.append(round(arq.get(key), 2))
+            if item[-1] == -999999:
+                try:
+                    item[-1] = item[-2]
+                except IndexError:
+                    item[-1] = 0
+
+        for key, item in self.user_data_dict.items():
             item.append(round(arq.get(key), 2))
             if item[-1] == -999999:
                 try:

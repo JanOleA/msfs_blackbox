@@ -1,0 +1,8 @@
+# Add any simulation variable to track. See here for options: https://docs.microsoft.com/en-us/previous-versions/microsoft-esp/cc526981(v=msdn.10)
+# (spaces in the simvar must be replaced with underscore)
+# Format each line as follows: SIMULATION_VARIABLE,Variable name,Unit
+# Example: FUEL_TOTAL_QUANTITY_WEIGHT,Remaining fuel,Gallons
+FUEL_TOTAL_QUANTITY_WEIGHT,Remaining fuel,Gallons
+VELOCITY_BODY_Z,Z_speed,fps
+VELOCITY_BODY_X,X_speed,fps
+VELOCITY_BODY_Y,Y_speed,fps
