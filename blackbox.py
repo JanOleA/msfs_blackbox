@@ -50,12 +50,15 @@ class Recorder:
         self._bottom_box = pygame.Rect(0, self._height - 60, self._width, 60)
         self._settings_box = pygame.Rect(0, self._height - 120, self._width, 60)
 
+        self._tickboxes_img = pygame.image.load(os.path.join(os.getcwd(), "img", "tickboxes.png")).convert_alpha()
+
         self._stat_texts = {} # static texts
         self.setup_static_texts()
-        self._clock = pygame.time.Clock()       
+        self._clock = pygame.time.Clock()
 
         self._mode = "preflight"
         self._usertext = ""
+        self._tickboxes = {}
         self.init_simconnect()
         self._start_time = time.time()
 
@@ -100,6 +103,17 @@ class Recorder:
                         self.store_json(f"{timestring}.json")
                         self.show_plot()
                         self.reset()
+                else:
+                    MB_x = self._MB_pos[0]
+                    MB_y = self._MB_pos[1]
+                    for key, item in self._tickboxes.items():
+                        ## all tickboxes are 11 wide and 11 high
+                        box_x = item.x
+                        box_y = item.y
+                        if MB_x > box_x and MB_x < box_x + 11:
+                            if MB_y > box_y and MB_y < box_y + 11:
+                                item.change_status()
+
 
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_BACKSPACE:
@@ -119,6 +133,31 @@ class Recorder:
         self._clock.tick_busy_loop(30)
         self.fps = self._clock.get_fps()
 
+    def draw_data_column(self, data_dict, left, top):
+        """ Draw a list of variables and their values to a column on the display """
+        text_y = top
+        for key, item in data_dict.items():
+            text_name = self._fonts[15].render(self.data_units[key][0], True, self.WHITE)
+            unit = self.data_units[key][1]
+            if len(unit) > 10:
+                unit = unit[:7] + "..."
+            try:
+                text_value = f"{item[-1]} {unit}"
+            except IndexError:
+                text_value = "---"
+            text_value = self._fonts[15].render(text_value, True, self.WHITE)
+            self._screen.blit(text_name, (left, text_y))
+            self._screen.blit(text_value, (left + 168, text_y))
+            tickbox = self._tickboxes[key]
+            tickbox_image_left_crop = 11 # red
+            if tickbox():
+                tickbox_image_left_crop = 0 # green
+
+            tickbox.set_pos(left + 330, text_y + 4)            
+            self._screen.blit(self._tickboxes_img, (left + 330, text_y + 4), (tickbox_image_left_crop, 0, 11, 11))
+            
+            text_y += text_value.get_height() + 3
+
     def render(self):
         """ Pygame render. """
         pygame.draw.rect(self._screen, self.GREY3, self._bg_box)
@@ -128,37 +167,19 @@ class Recorder:
         self._screen.blit(self._stat_texts["Topleft title"], (18, 18))
         self._screen.blit(self._stat_texts["Stdvals"], (18, 70))
         self._screen.blit(self._stat_texts["Value"], (18, 96))
-        self._screen.blit(self._stat_texts["Curr"], (180, 96))
+        self._screen.blit(self._stat_texts["Curr"], (185, 96))
+        self._screen.blit(self._stat_texts["Plot"], (340, 96))
 
         self._screen.blit(self._stat_texts["Usrvals"], (518, 70))
         self._screen.blit(self._stat_texts["Value"], (518, 96))
-        self._screen.blit(self._stat_texts["Curr"], (680, 96))
+        self._screen.blit(self._stat_texts["Curr"], (685, 96))
+        self._screen.blit(self._stat_texts["Plot"], (840, 96))
 
         # Draw standard values
-        text_y = 114
-        for key, item in self.data_dict.items():
-            text_name = self._fonts[15].render(self.data_units[key][0], True, self.WHITE)
-            try:
-                text_value = str(item[-1])
-            except IndexError:
-                text_value = "N/A"
-            text_value = self._fonts[15].render(text_value, True, self.WHITE)
-            self._screen.blit(text_name, (18, text_y))
-            self._screen.blit(text_value, (180, text_y))
-            text_y += text_value.get_height() + 3
+        self.draw_data_column(self.data_dict, 18, 114)
 
         # Draw user defines values
-        text_y = 114
-        for key, item in self.user_data_dict.items():
-            text_name = self._fonts[15].render(self.data_units[key][0], True, self.WHITE)
-            try:
-                text_value = str(item[-1])
-            except IndexError:
-                text_value = "N/A"
-            text_value = self._fonts[15].render(text_value, True, self.WHITE)
-            self._screen.blit(text_name, (518, text_y))
-            self._screen.blit(text_value, (680, text_y))
-            text_y += text_value.get_height() + 3
+        self.draw_data_column(self.user_data_dict, 518, 114)
 
         if self._mode == "preflight":
             text = self._stat_texts["Startrecord"]
@@ -199,6 +220,7 @@ class Recorder:
         """
         print("Connecting via SimConnect...")
         self._simconnect = SimConnect()
+        print(self._simconnect)
         self._aircraftrequests = AircraftRequests(self._simconnect, _time = 0)
 
         self.data_units = {"VERTICAL_SPEED": ("Vertical speed", "ft/min"),
@@ -207,7 +229,7 @@ class Recorder:
                            "GROUND_VELOCITY": ("Ground speed", "knots"),
                            "PLANE_ALT_ABOVE_GROUND": ("Radar altitude", "feet"),
                            "PLANE_ALTITUDE": ("Altitude (AMSL)", "feet"),
-                           "G_FORCE": ("G-force", None)}
+                           "G_FORCE": ("G-force", "g")}
         self.reset()
         print("Connected...")
 
@@ -230,6 +252,10 @@ class Recorder:
                           "PLANE_ALTITUDE": [],
                           "G_FORCE": []}
 
+        for key in self.data_dict:
+            if not key in self._tickboxes:
+                self._tickboxes[key] = TickBox(key)
+
         self.load_user_vars()
 
     def load_user_vars(self):
@@ -248,8 +274,13 @@ class Recorder:
             line_split = line.split(",")
             if len(line_split) != 3:
                 print("Skipping line:", line)
-            self.user_data_dict[line_split[0]] = []
-            self.data_units[line_split[0]] = (line_split[1], line_split[2])
+                continue
+            key = line_split[0]
+            self.user_data_dict[key] = []
+            self.data_units[key] = (line_split[1], line_split[2])
+            if not key in self._tickboxes:
+                self._tickboxes[key] = TickBox(key)
+
         print("User vars loaded...")
 
     def get_data(self):
@@ -377,6 +408,35 @@ class Recorder:
         with open(path, "w") as outfile:
             json.dump(store_dict, outfile)
         
+
+class TickBox:
+    """ Tick box. Can be connected to a simvar. """
+    def __init__(self, simvar):
+        self._simvar = simvar
+        self._ticked = False
+        self.x = None
+        self.y = None
+
+    def set_pos(self, x, y):
+        self.x = x
+        self.y = y
+
+    def change_status(self):
+        if self._ticked:
+            self._ticked = False
+        else:
+            self._ticked = True
+
+    @property
+    def ticked(self):
+        return self._ticked
+
+    @property
+    def simvar(self):
+        return self._simvar
+
+    def __call__(self):
+        return self._ticked
 
 if __name__ == "__main__":
     recorder = Recorder()
