@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 
 class Recorder:
     def __init__(self):
+        """ Variables for Pygame """
         self._running = True
         self._screen = None
         self._width = 1280
@@ -33,6 +34,7 @@ class Recorder:
         self.BLACK = (0, 0, 0)
 
     def init_UI(self):
+        """ Setup Pygame, SimConnect, static elements for UI. """
         pygame.init()
         pygame.display.set_caption("Blackbox")
         self._screen = pygame.display.set_mode(self._size, pygame.HWSURFACE | pygame.DOUBLEBUF)
@@ -58,6 +60,7 @@ class Recorder:
         self._start_time = time.time()
 
     def setup_static_texts(self):
+        """ Render texts that do not change. """
         self._stat_texts["Topleft title"] = self._fonts[19].render("Blackbox MSFS flight recorder",
                                                                    True, self.WHITE)
         self._stat_texts["Stdvals"] = self._fonts[17].render("Standard values:",
@@ -80,6 +83,7 @@ class Recorder:
                                                                 True, self.WHITE)
 
     def on_event(self, event):
+        """ Track Pygame events. """
         if event.type == pygame.QUIT:
             self._running = False
 
@@ -106,15 +110,17 @@ class Recorder:
                     self._usertext += add_text
 
     def loop(self):
+        """ Main loop. """
         self._MB_pos = pygame.mouse.get_pos()
 
         if self._mode == "recording":
             self.get_data()
 
-        self._clock.tick_busy_loop(60)
+        self._clock.tick_busy_loop(30)
         self.fps = self._clock.get_fps()
 
     def render(self):
+        """ Pygame render. """
         pygame.draw.rect(self._screen, self.GREY3, self._bg_box)
         pygame.draw.rect(self._screen, self.GREY2, self._top_box)
         pygame.draw.rect(self._screen, self.GREY2, self._settings_box)
@@ -128,6 +134,7 @@ class Recorder:
         self._screen.blit(self._stat_texts["Value"], (518, 96))
         self._screen.blit(self._stat_texts["Curr"], (680, 96))
 
+        # Draw standard values
         text_y = 114
         for key, item in self.data_dict.items():
             text_name = self._fonts[15].render(self.data_units[key][0], True, self.WHITE)
@@ -140,6 +147,7 @@ class Recorder:
             self._screen.blit(text_value, (180, text_y))
             text_y += text_value.get_height() + 3
 
+        # Draw user defines values
         text_y = 114
         for key, item in self.user_data_dict.items():
             text_name = self._fonts[15].render(self.data_units[key][0], True, self.WHITE)
@@ -186,6 +194,9 @@ class Recorder:
         self.cleanup()
 
     def init_simconnect(self):
+        """ Connect SimConnect to the Flight Simulator and set up the requests
+        object. Prepare data dictionaries.
+        """
         print("Connecting via SimConnect...")
         self._simconnect = SimConnect()
         self._aircraftrequests = AircraftRequests(self._simconnect, _time = 0)
@@ -201,6 +212,7 @@ class Recorder:
         print("Connected...")
 
     def reset(self):
+        """ (Re)set values tracking simulator state and (re)set data dictionaries. """
         self.airborne = False
         self.has_been_airborne = False
         self.landing_detected = False
@@ -221,6 +233,9 @@ class Recorder:
         self.load_user_vars()
 
     def load_user_vars(self):
+        """ User defines values to track from user_values.txt
+        Set up the data dictionary for the user values.
+        """
         self.user_data_dict = {}
         with open("user_values.txt", "r") as infile:
             lines = infile.readlines()
@@ -235,14 +250,17 @@ class Recorder:
                 print("Skipping line:", line)
             self.user_data_dict[line_split[0]] = []
             self.data_units[line_split[0]] = (line_split[1], line_split[2])
-        print("User vars loaded")
+        print("User vars loaded...")
 
     def get_data(self):
-        """ Collect data from the simulator via SimConnect """
+        """ Collect data from the simulator via SimConnect.
+        If the request times out, it will return -999999. There are many ways to
+        handle this, but in this case we keep the previous value (or set it to
+        0 if there are no values yet).        
+        """
         arq = self._aircraftrequests
 
         on_the_ground = arq.get("SIM_ON_GROUND")
-
         if on_the_ground == -999999:
             pass # keep the last value for self.airborne
         else:
@@ -255,6 +273,7 @@ class Recorder:
         if len(self.airborne_list) > 100:
             self.airborne_list.pop(0)
 
+        # Get standard values.
         for key, item in self.data_dict.items():
             item.append(round(arq.get(key), 2))
             if item[-1] == -999999:
@@ -263,6 +282,7 @@ class Recorder:
                 except IndexError:
                     item[-1] = 0
 
+        # Get user defined values.
         for key, item in self.user_data_dict.items():
             item.append(round(arq.get(key), 2))
             if item[-1] == -999999:
@@ -282,7 +302,7 @@ class Recorder:
             self.landing_data = self.data_dict.copy()
         
         speed_tot = np.sqrt(self.data_dict["VERTICAL_SPEED"][-1]**2
-                                + self.data_dict["GROUND_VELOCITY"][-1]**2)
+                            + self.data_dict["GROUND_VELOCITY"][-1]**2)
 
         if ((not any(self.airborne_list) or (speed_tot < 2 and not self.airborne))
                                                         # if the plane has been on the ground for at
@@ -293,6 +313,7 @@ class Recorder:
             print("Auto-end [IMPLEMENT]")     # stop logging
 
     def make_plot(self, filename, skip_indices = 1):
+        """ Create and save the plot for the latest run. """
         fig, axs = plt.subplots(2, 2, figsize = (13,10))
         axs[1, 0].plot(self.time_elapsed[::skip_indices],
                        self.data_dict["VERTICAL_SPEED"][::skip_indices],
@@ -343,13 +364,16 @@ class Recorder:
         self.fig.savefig(path, dpi = 300)
 
     def show_plot(self):
-        """ Shows the latest figure """
+        """ Shows the latest figure. """
         plt.show()
 
     def store_json(self, filename):
+        """ Store the latest data as a JSON file. """
         path = os.path.join(os.getcwd(), "data", filename)
         store_dict = self.data_dict.copy()
         store_dict["ELAPSED_TIME"] = self.time_elapsed
+        for key, item in self.user_data_dict.items():
+            store_dict[key] = item
         with open(path, "w") as outfile:
             json.dump(store_dict, outfile)
         

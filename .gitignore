@@ -2,6 +2,10 @@
 # Created by https://www.toptal.com/developers/gitignore/api/windows,python,vscode,linux
 # Edit at https://www.toptal.com/developers/gitignore?templates=windows,python,vscode,linux
 
+# data files and plots
+plots/*
+data/*
+
 ### Linux ###
 *~
 
