@@ -177,51 +177,6 @@ class DataRecorder:
             ax.set_xlabel("Time elapsed")
             ax.set_ylabel(self._unit_dict[item[0]])
             ax.legend()
-        """
-        axs[1, 0].plot(self._time_elapsed[::skip_indices],
-                       self.data_dict["VERTICAL_SPEED"][::skip_indices],
-                       label = "Vertical speed")
-        axs[1, 0].set_xlabel("Time elapsed")
-        axs[1, 0].set_ylabel("Speed [feet per minute]")
-        axs[1, 0].legend()
-
-        axs[0, 1].plot(self._time_elapsed[::skip_indices],
-                       self.data_dict["AIRSPEED_TRUE"][::skip_indices],
-                       label = "True airspeed")
-        axs[0, 1].plot(self._time_elapsed[::skip_indices],
-                       self.data_dict["GROUND_VELOCITY"][::skip_indices],
-                       label = "Ground speed")
-        axs[0, 1].plot(self._time_elapsed[::skip_indices],
-                       self.data_dict["AIRSPEED_INDICATED"][::skip_indices],
-                       label = "Indicated airspeed")
-        axs[0, 1].set_xlabel("Time elapsed")
-        axs[0, 1].set_ylabel("Speed [knots]")
-        axs[0, 1].legend()
-
-        axs[0, 0].plot(self._time_elapsed[::skip_indices],
-                       self.data_dict["PLANE_ALT_ABOVE_GROUND"][::skip_indices],
-                       label = "Radar altitude")
-        axs[0, 0].plot(self._time_elapsed[::skip_indices],
-                       self.data_dict["PLANE_ALTITUDE"][::skip_indices],
-                       label = "Altitude (AMSL)")
-        ground_level = (np.array(self.data_dict["PLANE_ALTITUDE"][::skip_indices])
-                        - np.array(self.data_dict["PLANE_ALT_ABOVE_GROUND"][::skip_indices]))
-        axs[0, 0].plot(self._time_elapsed[::skip_indices], ground_level,
-                       label = "Ground level",
-                       color = "green")
-        axs[0, 0].set_xlabel("Time elapsed")
-        axs[0, 0].set_ylabel("Altitude [feet]")
-        axs[0, 0].legend()
-
-        axs[1, 1].plot(self._time_elapsed[::skip_indices],
-                       self.data_dict["G_FORCE"][::skip_indices],
-                       label = "G-force")
-        axs[1, 1].set_xlabel("Time elapsed")
-        axs[1, 1].set_ylabel("G-force")
-        axs[1, 1].legend()
-
-        self.fig = fig
-        self.axs = axs"""
 
         path = os.path.join(os.getcwd(), "plots", filename)
         fig.savefig(path, dpi = 300)
@@ -385,6 +340,7 @@ class Window_BB:
             self._data_recorder.show_plot()
 
     def cfg_plot(self):
+        self._btn_cfgplot.configure(state = "disabled")
         self._cfg_plot_window = tk.Tk()
         self._cfg_plot_window.title("Configure plot")
 
@@ -431,7 +387,10 @@ class Window_BB:
                              command = self._store_plot_cols)
         btn_save.pack(pady = 5)
 
+        self._cfg_plot_window.protocol("WM_DELETE_WINDOW", self._store_plot_cols)
+
     def _store_plot_cols(self):
+        self._btn_cfgplot.configure(state = "normal")
         for row, item in self._entries.items():
             prow = item[0].get()
             pcol = item[1].get()
@@ -534,8 +493,6 @@ class Window_BB:
     def mainloop(self):
         self._window.after(250, self.record_loop)
         self._window.mainloop()
-
-
 
 
 if __name__ == "__main__":
