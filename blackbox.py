@@ -3,11 +3,11 @@ import os
 import time
 import json
 from datetime import datetime
-
 import tkinter as tk
 import tkinter.ttk as ttk
-import ttkwidgets as ttkwdgt
 import tkinter.font as tkFont
+
+import ttkwidgets as ttkwdgt
 from SimConnect import *
 import numpy as np
 import matplotlib.pyplot as plt
@@ -71,13 +71,14 @@ class DataRecorder:
     def reset(self):
         """ (Re)set values tracking simulator state and (re)set data dictionaries. """
         if self.has_init:
-            print("Resetting")
             self._airborne = False
             self._status = "starting"
             self._landing_time = 0
             self._airborne_list = [False]
             self._time_elapsed = []
+            self._events = []
             self._landing_data = {}
+            self._takeoff_data = {}
             self._start_time = time.time()
 
             for key in self._data_dict:
@@ -86,18 +87,28 @@ class DataRecorder:
     def collect_latest_data(self):
         """ Collect data from the simulator via SimConnect.
         If the request times out, it will return -999999. In this case we keep
-        the previous value (or set it to 0 if there are no values yet).        
+        the previous value (or set it to 0 if there are no values yet).
+
+        Stores the history of the data in the `data_dict` dictionary
         """
+        self._events = []
         aq = self._aq
         on_the_ground = aq.get("SIM_ON_GROUND")
         if on_the_ground == -999999:
             pass # keep the last value for self.airborne
+            if not hasattr(self, "airborne"):
+                self.airborne = False
         else:
             self.airborne = not on_the_ground
             if self.airborne and (self._status == "starting"
                                   or self._status == "taxiing out"):
                 print("Takeoff detected...")
                 self._status = "flying"
+
+                for key, item in self._data_dict.items():
+                    self._takeoff_data[key] = item[-2:]
+
+                self._events.append("takeoff")
 
         self._airborne_list.append(self.airborne)
         if len(self._airborne_list) > 100:
@@ -114,13 +125,15 @@ class DataRecorder:
         time_elapsed = time.time() - self._start_time
         self._time_elapsed.append(time_elapsed)
 
-        if self._status == "flying" and not any(self._airborne_list[-5:]):
+        if self._status == "flying" and not any(self._airborne_list[-3:]):
             print("Landing detected...")
             self._status = "rollout"
             self._landing_time = time_elapsed
             self._landing_data = {"LANDING_TIME": self._landing_time}
             for key, item in self._data_dict.items():
-                self._landing_data[key] = item[-1]
+                self._landing_data[key] = item[-4:]
+
+            self._events.append("landing")
 
     def get_simvars(self):
         return self._simvars
@@ -134,8 +147,16 @@ class DataRecorder:
         return self._status
     
     @property
+    def time_elapsed(self):
+        return self._time_elapsed[-1]
+
+    @property
     def data_dict(self):
         return self._data_dict.copy()
+
+    @property
+    def name_dict(self):
+        return self._name_dict
 
     @property
     def latest_data(self):
@@ -148,14 +169,24 @@ class DataRecorder:
     def landing_data(self):
         return self._landing_data.copy()
 
+    @property
+    def takeoff_data(self):
+        return self._takeoff_data.copy()
+
+    @property
+    def events(self):
+        return self._events
+
     def make_plot(self, filename, tree_data, skip_indices = 1):
         """ Create and save the plot for the latest run. """
         remove_items = []
         for item in tree_data:
             if item[-1] == False:
+                # remove items with disabled plot tickbox
                 remove_items.append(item)
         for item in remove_items:
             tree_data.remove(item)
+
         tree_data = np.array(tree_data)
         rows = tree_data[:,4].astype(int)
         cols = tree_data[:,5].astype(int)
@@ -167,12 +198,19 @@ class DataRecorder:
         for item in tree_data:
             if max_rows == max_cols == 1:
                 ax = axs
+            elif max_rows == 1:
+                col = int(item[5]) - 1
+                ax = axs[col]
+            elif max_cols == 1:
+                row = int(item[4]) - 1
+                ax = axs[row]
             else:
                 row = int(item[4]) - 1
                 col = int(item[5]) - 1
                 ax = axs[row, col]
-            ax.plot(self._time_elapsed[::skip_indices],
-                    self._data_dict[item[0]][::skip_indices],
+
+            ax.plot(self._time_elapsed[1::skip_indices],
+                    self._data_dict[item[0]][1::skip_indices],
                     label = self._name_dict[item[0]])
             ax.set_xlabel("Time elapsed")
             ax.set_ylabel(self._unit_dict[item[0]])
@@ -210,17 +248,17 @@ class Window_BB:
         self._window = tk.Tk()
         self._window.title("Blackbox FS data recorder")
 
-        self._window.columnconfigure(0, minsize = 800, weight = 1)
-        self._window.rowconfigure(1, minsize = 400, weight = 1)
+        self._window.columnconfigure(0, weight = 1)
+        self._window.rowconfigure(1, weight = 1)
 
         frm_topbar = tk.Frame(self._window)
         frm_topbar.grid(row = 0, column = 0, pady = 5)
 
-        frm_topbar.columnconfigure(1, minsize = 400, weight = 1)
+        frm_topbar.columnconfigure(1, weight = 1)
 
         lbl_title = tk.Label(frm_topbar,
                              text = "Blackbox FS recorder",
-                             font=("Segoe UI", 12), width = 20)
+                             font=("Segoe UI", 12), width = 25)
 
         lbl_title.grid(row = 0, column = 0, sticky = "w")
 
@@ -232,13 +270,11 @@ class Window_BB:
 
         self._lbl_status = tk.Label(master = frm_topbar,
                               text = "Status: Loading",
-                              font=("Segoe UI", 12), width = 20)
+                              font=("Segoe UI", 12), width = 25)
         self._lbl_status.grid(row = 0, column = 2, sticky = "e")
 
         frm_program = tk.Frame(self._window)
         frm_program.grid(row = 1, column = 0, sticky = "nw")
-        frm_program.columnconfigure(0, minsize = 600, weight = 1)
-        frm_program.rowconfigure(0, minsize = 600, weight = 1)
 
         frm_leftmenu = tk.Frame(frm_program)
         frm_leftmenu.grid(row = 0, column = 0, sticky = "nw")
@@ -298,6 +334,9 @@ class Window_BB:
         btn_addnew = tk.Button(self._frm_newentries, text = "Add", command = self.add_new_to_tree, width = 12)
         btn_addnew.grid(row = 0, column = 3, sticky = "ew", padx = 5, pady = 3)
 
+        self._lbl_lastevent = tk.Label(frm_program, text = "No recent events")
+        self._lbl_lastevent.grid(row = 2, column = 0, sticky = "sw", padx = 5, pady = 5)
+
     def disable_frame(self, frame):
         """ Disable all items in a frame """
         for child in frame.winfo_children():
@@ -322,7 +361,9 @@ class Window_BB:
             self._btn_deleteitem.configure(state = "disabled")
             self._ent_flightname.configure(state = "disabled")
             if not self._data_recorder.has_init:
+                print("init_simconnect")
                 self._data_recorder.init_simconnect()
+            self._data_recorder.reset()
             self._lbl_status["text"] = "Status: Recording"
         else:
             self._recording = False
@@ -475,10 +516,36 @@ class Window_BB:
             self._tree_simvars.change_state(row, "checked")
 
     def record_loop(self):
+        """ Collect latest data and display it to the user """
         dr = self._data_recorder
         if self._recording:
             dr.collect_latest_data()
             latest_data = dr.latest_data
+            if "takeoff" in dr.events:
+                text = f"Takeoff at {dr.time_elapsed:.2f} | "
+                for key, item in dr.takeoff_data.items():
+                    if key == "G_FORCE":
+                        text += f"{name}: {item:.2f} | "
+                        continue
+                    name = dr.name_dict[key]
+                    text += f"{name}: {np.average(item):.0f} | "
+                self._lbl_lastevent["text"] = text
+            if "landing" in dr.events:
+                text = f"Landing at {dr.time_elapsed:.2f} | "
+                for key, item in dr.landing_data.items():
+                    if key == "LANDING_TIME":
+                        continue
+                    if key == "G_FORCE":
+                        item = np.max(item)
+                        name = dr.name_dict[key]
+                        text += f"{name}: {item:.2f} | "
+                        continue
+                    if key == "VERTICAL_SPEED":
+                        item = np.min(item)
+                    name = dr.name_dict[key]
+                    text += f"{name}: {np.average(item):.0f} | "
+                self._lbl_lastevent["text"] = text
+
             rows = self._tree_simvars.get_children()
             for row in rows:
                 values = self._tree_simvars.item(row)["values"]
@@ -506,5 +573,6 @@ if __name__ == "__main__":
                        ]
 
     
+
     window = Window_BB(default_simvars)
     window.mainloop()
