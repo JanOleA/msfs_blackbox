@@ -100,8 +100,10 @@ class DataRecorder:
                 self.airborne = False
         else:
             self.airborne = not on_the_ground
-            if self.airborne and (self._status == "starting"
-                                  or self._status == "taxiing out"):
+            if (self.airborne
+                    and (self._status == "starting"
+                         or self._status == "taxiing out")
+                    and len(self._airborne_list) > 2):
                 print("Takeoff detected...")
                 self._status = "flying"
 
@@ -521,29 +523,30 @@ class Window_BB:
         if self._recording:
             dr.collect_latest_data()
             latest_data = dr.latest_data
+
             if "takeoff" in dr.events:
-                text = f"Takeoff at {dr.time_elapsed:.2f} | "
+                text = f"Takeoff at {dr.time_elapsed:.1f} s | "
                 for key, item in dr.takeoff_data.items():
-                    if key == "G_FORCE":
-                        text += f"{name}: {item:.2f} | "
-                        continue
                     name = dr.name_dict[key]
-                    text += f"{name}: {np.average(item):.0f} | "
+                    if key == "G_FORCE":
+                        text += f"{name}: {np.average(item):.2f} | "
+                    if key == "AIRSPEED_INDICATED" or key == "GROUND_VELOCITY":
+                        text += f"{name}: {np.average(item):.0f} kts| "
                 self._lbl_lastevent["text"] = text
+
             if "landing" in dr.events:
-                text = f"Landing at {dr.time_elapsed:.2f} | "
+                text = f"Landing at {dr.time_elapsed:.1f} s | "
                 for key, item in dr.landing_data.items():
-                    if key == "LANDING_TIME":
-                        continue
+                    name = dr.name_dict[key]
                     if key == "G_FORCE":
                         item = np.max(item)
-                        name = dr.name_dict[key]
                         text += f"{name}: {item:.2f} | "
-                        continue
                     if key == "VERTICAL_SPEED":
                         item = np.min(item)
-                    name = dr.name_dict[key]
-                    text += f"{name}: {np.average(item):.0f} | "
+                        text += f"{name}: {item:.0f} ft/min | "
+                    if key == "AIRSPEED_INDICATED" or key == "GROUND_VELOCITY":
+                        text += f"{name}: {np.average(item):.0f} kts| "
+
                 self._lbl_lastevent["text"] = text
 
             rows = self._tree_simvars.get_children()
