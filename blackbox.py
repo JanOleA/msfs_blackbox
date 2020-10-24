@@ -340,10 +340,13 @@ class Window_BB:
                                     command = self.reset_data, width = 10)
         self._btn_cfgplot = tk.Button(frm_top_buttons, text = "Configure plot",
                                       command = self.cfg_plot, width = 20)
+        self._btn_savesettings = tk.Button(frm_top_buttons, text = "Save settings",
+                                           command = self._save_settings, width = 20)
 
         self._btn_record.grid(row = 0, column = 0, sticky = "ew", padx = 5)
         self._btn_reset.grid(row = 0, column = 1, sticky = "ew")
         self._btn_cfgplot.grid(row = 0, column = 2, sticky = "ew", padx = 5)
+        self._btn_savesettings.grid(row = 0, column = 3, sticky = "ew")
 
         lbl_tracking = tk.Label(frm_leftmenu, text = "Tracking variables:")
         lbl_tracking.grid(row = 2, column = 0, sticky = "s", padx = 5, pady = 3)
@@ -619,6 +622,11 @@ class Window_BB:
             print("stop")
             self._data_recorder.toggle_pushback()
 
+    def _save_settings(self):
+        items = self.tree_items
+        with open(os.path.join(os.getcwd(), "settings.json"), "w") as outfile:
+            json.dump(items, outfile)
+
     @property
     def tree_items(self):
         return self.get_tree_items()
@@ -641,13 +649,24 @@ class Window_BB:
         self._tree_simvars.column("unit", width = 50)
         self._tree_simvars.column("value", width = 60)
 
-        for item in default_simvars:
-            item += ["N/A", 1, 1]
-            self._tree_simvars.insert("", "end", values = item)
+        if os.path.isfile(os.path.join(os.getcwd(), "settings.json")):
+            with open(os.path.join(os.getcwd(), "settings.json"), "r") as infile:
+                items = json.load(infile)
+            for item in items:
+                self._tree_simvars.insert("", "end", values = item[:-1])
+                if item[-1]:
+                    row = self._tree_simvars.get_children()[-1]
+                    self._tree_simvars.change_state(row, "checked")
+                    
 
-        rows = self._tree_simvars.get_children()
-        for row in rows:
-            self._tree_simvars.change_state(row, "checked")
+        else:
+            for item in default_simvars:
+                item += ["N/A", 1, 1]
+                self._tree_simvars.insert("", "end", values = item)
+
+            rows = self._tree_simvars.get_children()
+            for row in rows:
+                self._tree_simvars.change_state(row, "checked")
 
     def record_loop(self):
         """ Collect latest data and display it to the user """
