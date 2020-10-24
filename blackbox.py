@@ -11,6 +11,7 @@ import ttkwidgets as ttkwdgt
 from SimConnect import *
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.interpolate import interp1d
 
 
 class DataRecorder:
@@ -38,9 +39,18 @@ class DataRecorder:
         print("Connecting via SimConnect...")
         self._simconnect = SimConnect()
         self._aq = AircraftRequests(self._simconnect, _time = 0)
+        self.ae = AircraftEvents(self._simconnect)
+
+        self.toggle_pushback = self.ae.find("TOGGLE_PUSHBACK")
+        self._set_pushback_angle = self.ae.find("KEY_TUG_HEADING")
+        self.select_1 = self.ae.find("SELECT_1")
+        self.select_2 = self.ae.find("SELECT_2")
 
         self.has_init = True
         self.reset()
+
+    def set_pushback_angle(self, angle):
+        self._set_pushback_angle(angle)
 
     def set_simvars(self, simvars = []):
         """ Add new simvars and remove those no longer included in 'simvars'
@@ -84,11 +94,17 @@ class DataRecorder:
             for key in self._data_dict:
                 self._data_dict[key] = []
 
+    def get_simvars(self):
+        return self._simvars
+
+    def get_pushback_state(self):
+        if self.has_init:
+            return self._aq.get("PUSHBACK_STATE")
+        else:
+            print(f"Attempted to pushback before init. Start recording first.")
+
     def collect_latest_data(self):
         """ Collect data from the simulator via SimConnect.
-        If the request times out, it will return -999999. In this case we keep
-        the previous value (or set it to 0 if there are no values yet).
-
         Stores the history of the data in the `data_dict` dictionary
         """
         self._events = []
@@ -100,45 +116,50 @@ class DataRecorder:
                 self.airborne = False
         else:
             self.airborne = not on_the_ground
-            if (self.airborne
-                    and (self._status == "starting"
-                         or self._status == "taxiing out")
-                    and len(self._airborne_list) > 2):
-                print("Takeoff detected...")
-                self._status = "flying"
-
-                for key, item in self._data_dict.items():
-                    self._takeoff_data[key] = item[-2:]
-
-                self._events.append("takeoff")
-
+            
         self._airborne_list.append(self.airborne)
         if len(self._airborne_list) > 100:
             self._airborne_list.pop(0)
 
         for key, item in self._data_dict.items():
-            item.append(round(aq.get(key), 2))
-            if item[-1] == -999999:
-                try:
-                    item[-1] = item[-2]
-                except IndexError:
-                    item[-1] = 0
+            try:
+                item.append(round(aq.get(key), 4))
+            except Exception as e:
+                item.append(-999999)
 
         time_elapsed = time.time() - self._start_time
         self._time_elapsed.append(time_elapsed)
 
-        if self._status == "flying" and not any(self._airborne_list[-3:]):
+        if (self.airborne
+                and (self._status == "starting"
+                     or self._status == "taxiing out")
+                and len(self._airborne_list) > 2):
+            if all(self._airborne_list[-3:]):
+                print("Takeoff detected...")
+                self._status = "flying"
+
+                for key, item in self._data_dict.items():
+                    item_ = np.array(item[-3:])
+                    item_ = item_[item_ != -999999]
+                    if len(item_) == 0:
+                        item_ = [-999999]
+                    self._takeoff_data[key] = item[-3:-1]
+
+                self._events.append("takeoff")
+
+        if self._status == "flying" and not any(self._airborne_list[-3:]) and not "takeoff" in self._events:
             print("Landing detected...")
             self._status = "rollout"
             self._landing_time = time_elapsed
             self._landing_data = {"LANDING_TIME": self._landing_time}
             for key, item in self._data_dict.items():
-                self._landing_data[key] = item[-4:]
+                item_ = np.array(item[-4:])
+                item_ = item_[item != -999999]
+                if len(item_) == 0:
+                    item_ = [-999999]
+                self._landing_data[key] = item_
 
             self._events.append("landing")
-
-    def get_simvars(self):
-        return self._simvars
 
     @property
     def simvars(self):
@@ -211,8 +232,8 @@ class DataRecorder:
                 col = int(item[5]) - 1
                 ax = axs[row, col]
 
-            ax.plot(self._time_elapsed[1::skip_indices],
-                    self._data_dict[item[0]][1::skip_indices],
+            ax.plot(self._time_elapsed[1:-1:skip_indices],
+                    self._data_dict[item[0]][1:-1:skip_indices],
                     label = self._name_dict[item[0]])
             ax.set_xlabel("Time elapsed")
             ax.set_ylabel(self._unit_dict[item[0]])
@@ -225,15 +246,44 @@ class DataRecorder:
         """ Shows the latest figure. """
         plt.show()
 
+    def clean_data(self):
+        """ Interpolates for the values where SimConnect returned -999999 """
+        for key, item in self._data_dict.items():
+            y = np.array(item)
+            if y[-1] == -999999:
+                y[-1] = y[y != -999999][-1]
+            if y[0] == -999999:
+                y[0] = y[y != -999999][0]
+            x = np.arange(len(y))
+            idx = np.where(y != -999999)
+            try:
+                f = interp1d(x[idx], y[idx])
+                self._data_dict[key] = f(x)
+            except Exception as e:
+                print(f"Couldn't interpolate {key}: {e}")         
+                print(min(item[item != -999999]))   
+
+
     def store_json(self, filename):
         """ Store the latest data as a JSON file. """
-        path = os.path.join(os.getcwd(), "data", filename)
-        store_dict = self.data_dict.copy()
-        store_dict["ELAPSED_TIME"] = self._time_elapsed
-        for key, item in self._landing_data.items():
-            store_dict[f"LANDING_{key}"] = item
-        with open(path, "w") as outfile:
-            json.dump(store_dict, outfile)
+        try:
+            path = os.path.join(os.getcwd(), "data", filename)
+            store_dict = self.data_dict.copy()
+            store_dict["ELAPSED_TIME"] = self._time_elapsed
+            for key, item in self._landing_data.items():
+                try:
+                    store_dict[f"LANDING_{key}"] = item.tolist()
+                except Exception as e:
+                    print(f"Attempted converting {key} to list. Failed because: {e}")
+            for key, item in store_dict.items():
+                try:
+                    store_dict[key] = item.tolist()
+                except Exception as e:
+                    print(f"Attempted converting {key} to list. Failed because: {e}")
+            with open(path, "w") as outfile:
+                json.dump(store_dict, outfile)
+        except Exception as e:
+            print(f"Couldn't save as JSON: {e}")
 
 
 class Window_BB:
@@ -339,6 +389,50 @@ class Window_BB:
         self._lbl_lastevent = tk.Label(frm_program, text = "No recent events")
         self._lbl_lastevent.grid(row = 2, column = 0, sticky = "sw", padx = 5, pady = 5)
 
+        """
+
+        frm_pushback_helper = ttk.Frame(frm_program)
+        frm_pushback_helper.grid(row = 0, column = 1, sticky = "nw")
+
+        frm_pushback_label = ttk.Frame(frm_pushback_helper)
+        frm_pushback_label.grid(row = 0, column = 0, sticky = "nsew")
+
+        lbl_pushback_helper = ttk.Label(frm_pushback_label, text = "Pushback helper", justify = "center")
+        lbl_pushback_helper.pack()
+
+        frm_leftpush = ttk.Frame(frm_pushback_helper)
+        frm_leftpush.grid(row = 1, column = 0, sticky = "nsew")
+
+        frm_ctrpush = ttk.Frame(frm_pushback_helper)
+        frm_ctrpush.grid(row = 1, column = 1, sticky = "nsew")
+
+        frm_rightpush = ttk.Frame(frm_pushback_helper)
+        frm_rightpush.grid(row = 1, column = 2, sticky = "nsew")
+
+        frm_pushback_helper.columnconfigure(0, weight = 1)
+        frm_pushback_helper.columnconfigure(1, weight = 1)
+        frm_pushback_helper.columnconfigure(2, weight = 1)
+
+        frm_pushback_helper.rowconfigure(0, weight = 0)
+
+        btn_pushback_left = ttk.Button(frm_leftpush, text = "←", 
+                                       command = self.set_pushback_left)
+        btn_pushback_left.pack(fill = tk.BOTH, expand = 1)
+
+        btn_pushback_stop = ttk.Button(frm_ctrpush, text = "Stop", 
+                                       command = self.set_pushback_stop)
+        btn_pushback_stop.pack()
+
+        btn_pushback_back = ttk.Button(frm_ctrpush, text = "↓", 
+                                       command = self.set_pushback_backwards)
+        btn_pushback_back.pack()
+
+        btn_pushback_rigt = ttk.Button(frm_rightpush, text = "→", 
+                                       command = self.set_pushback_right)
+        btn_pushback_rigt.pack(fill = tk.BOTH, expand = 1)
+
+        self._pushback_status = 3 # 3 = stopped, 2 = right, 1 = left, 0 = backwards"""
+
     def disable_frame(self, frame):
         """ Disable all items in a frame """
         for child in frame.winfo_children():
@@ -379,7 +473,9 @@ class Window_BB:
             flight_name = self._ent_flightname.get()
             if flight_name == "Name your flight":
                 flight_name = "unnamed"
+            self._data_recorder.clean_data()
             self._data_recorder.make_plot(f"{flight_name.replace(' ', '_')}.pdf", self.tree_items)
+            self._data_recorder.store_json(f"{flight_name.replace(' ', '_')}.json")
             self._data_recorder.show_plot()
 
     def cfg_plot(self):
@@ -487,6 +583,42 @@ class Window_BB:
             ret_list.append(self._tree_simvars.item(row)["values"] + [this_checked])
         return ret_list
 
+    def angle_converter(self, angle):
+        """ Converts from an angle to a 32 bit integer representing that angle
+        from 0 to 4294967295.
+        """
+        angle /= 360 # first normalize the angle
+        angle *= 4294967295 # multiply to convert
+        angle = int(angle) # convert to int
+
+        return angle
+
+    def set_pushback_backwards(self):
+        state = int(self._data_recorder.get_pushback_state())
+        if state == 3:
+            print("start backwards")
+            self._data_recorder.toggle_pushback()
+            self._data_recorder.set_pushback_angle(0)
+        elif state == 0 or state == 1 or state == 2:
+            print("set angle to 0")
+            self._data_recorder.set_pushback_angle(0)
+
+    def set_pushback_left(self):
+        state = int(self._data_recorder.get_pushback_state())
+        if state == 0 or state == 1 or state == 2:
+            self._data_recorder.set_pushback_angle(45)
+
+    def set_pushback_right(self):
+        state = int(self._data_recorder.get_pushback_state())
+        if state == 0 or state == 1 or state == 2:
+            self._data_recorder.set_pushback_angle(315)
+
+    def set_pushback_stop(self):
+        state = int(self._data_recorder.get_pushback_state())
+        if state != 3:
+            print("stop")
+            self._data_recorder.toggle_pushback()
+
     @property
     def tree_items(self):
         return self.get_tree_items()
@@ -527,17 +659,23 @@ class Window_BB:
             if "takeoff" in dr.events:
                 text = f"Takeoff at {dr.time_elapsed:.1f} s | "
                 for key, item in dr.takeoff_data.items():
-                    name = dr.name_dict[key]
+                    try:
+                        name = dr.name_dict[key]
+                    except KeyError:
+                        continue
                     if key == "G_FORCE":
                         text += f"{name}: {np.average(item):.2f} | "
                     if key == "AIRSPEED_INDICATED" or key == "GROUND_VELOCITY":
-                        text += f"{name}: {np.average(item):.0f} kts| "
+                        text += f"{name}: {np.average(item):.0f} kts | "
                 self._lbl_lastevent["text"] = text
 
             if "landing" in dr.events:
                 text = f"Landing at {dr.time_elapsed:.1f} s | "
                 for key, item in dr.landing_data.items():
-                    name = dr.name_dict[key]
+                    try:
+                        name = dr.name_dict[key]
+                    except KeyError:
+                        continue
                     if key == "G_FORCE":
                         item = np.max(item)
                         text += f"{name}: {item:.2f} | "
@@ -545,7 +683,7 @@ class Window_BB:
                         item = np.min(item)
                         text += f"{name}: {item:.0f} ft/min | "
                     if key == "AIRSPEED_INDICATED" or key == "GROUND_VELOCITY":
-                        text += f"{name}: {np.average(item):.0f} kts| "
+                        text += f"{name}: {np.average(item):.0f} kts | "
 
                 self._lbl_lastevent["text"] = text
 
@@ -553,10 +691,14 @@ class Window_BB:
             for row in rows:
                 values = self._tree_simvars.item(row)["values"]
                 key, name, unit = values[:3]
+                last_val = values[3]
+                if latest_data[key] == -999999:
+                    new_val = last_val
+                else:
+                    new_val = latest_data[key]
                 prow, pcol = values[4:]
                 self._tree_simvars.item(row, values = [key, name, unit,
-                    	                               latest_data[key],
-                                                       prow, pcol])
+                    	                               new_val, prow, pcol])
         
         self._window.after(250, self.record_loop)
 
@@ -573,6 +715,8 @@ if __name__ == "__main__":
                        ["PLANE_ALT_ABOVE_GROUND",   "Altitude (grnd)",      "feet"],
                        ["PLANE_ALTITUDE",           "Altitude (AMSL)",      "feet"],
                        ["G_FORCE",                  "G-force",              "g"],
+                       ["PLANE_LATITUDE",           "GPS Latitude",         "deg"],
+                       ["PLANE_LONGITUDE",          "GPS Longitude",        "deg"],
                        ]
 
     
