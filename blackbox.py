@@ -117,19 +117,6 @@ class DataRecorder:
         else:
             self.airborne = not on_the_ground
             
-        self._airborne_list.append(self.airborne)
-        if len(self._airborne_list) > 100:
-            self._airborne_list.pop(0)
-
-        for key, item in self._data_dict.items():
-            try:
-                item.append(round(aq.get(key), 4))
-            except Exception as e:
-                item.append(-999999)
-
-        time_elapsed = time.time() - self._start_time
-        self._time_elapsed.append(time_elapsed)
-
         if (self.airborne
                 and (self._status == "starting"
                      or self._status == "taxiing out")
@@ -146,6 +133,20 @@ class DataRecorder:
                     self._takeoff_data[key] = item[-3:-1]
 
                 self._events.append("takeoff")
+                
+        self._airborne_list.append(self.airborne)
+        if len(self._airborne_list) > 100:
+            self._airborne_list.pop(0)
+
+        for key, item in self._data_dict.items():
+            try:
+                item.append(round(aq.get(key), 4))
+            except Exception as e:
+                item.append(-999999)
+
+        time_elapsed = time.time() - self._start_time
+        self._time_elapsed.append(time_elapsed)
+
 
         if self._status == "flying" and not any(self._airborne_list[-3:]) and not "takeoff" in self._events:
             print("Landing detected...")
@@ -657,7 +658,7 @@ class Window_BB:
                 if item[-1]:
                     row = self._tree_simvars.get_children()[-1]
                     self._tree_simvars.change_state(row, "checked")
-                    
+            self._data_recorder.set_simvars(self.tree_items)
 
         else:
             for item in default_simvars:
@@ -711,6 +712,8 @@ class Window_BB:
                 values = self._tree_simvars.item(row)["values"]
                 key, name, unit = values[:3]
                 last_val = values[3]
+                if not key in latest_data:
+                    continue
                 if latest_data[key] == -999999:
                     new_val = last_val
                 else:
